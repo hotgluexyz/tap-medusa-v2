@@ -1,0 +1,52 @@
+# tap-medusa-v2
+
+`tap-medusa-v2` is a Singer tap for Medusa that produces JSON-formatted
+data following the [Singer spec](https://github.com/singer-io/getting-started/blob/master/SPEC.md)
+
+## Configuration
+
+### Accepted Config Options
+
+A full list of supported settings and capabilities for this
+tap is available by running:
+
+```bash
+tap-medusa-v2 --about
+```
+
+### Configure using environment variables
+
+This Singer tap will automatically import any environment variables within the working directory's
+`.env` if the `--config=ENV` is provided, such that config values will be considered if a matching
+environment variable is set either in the terminal context or in the `.env` file.
+
+Sample config:
+
+```$json
+{
+  "email": "email@email.com",
+  "password": "******************",
+  "base_url": "your_meda_url",
+}
+```
+
+### Source Authentication and Authorization
+
+## Usage
+
+You can easily run `tap-medusa-v2` by itself or in a pipeline.
+
+### Executing the Tap Directly
+
+```bash
+tap-medusa-v2 --version
+tap-medusa-v2 --help
+tap-medusa-v2 --config CONFIG --discover > ./catalog.json
+```
+
+### Initialize your Development Environment
+
+```bash
+pipx install poetry
+poetry install
+```
