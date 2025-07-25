@@ -12,6 +12,9 @@ from singer_sdk.helpers.jsonpath import extract_jsonpath
 from singer_sdk.plugin_base import PluginBase as TapBaseClass
 from singer_sdk.streams import RESTStream
 
+TOKEN_EXPIRY_BUFFER_SECONDS = 120
+TOKEN_VALIDITY_MINUTES = 60
+
 
 class MedusaStream(RESTStream):
     """Medusa stream class."""
@@ -26,7 +29,6 @@ class MedusaStream(RESTStream):
         super().__init__(tap, name=name, schema=schema, path=path)
 
     records_jsonpath = "$[*]"
-    user_logged = False
     additional_params = {}
 
     @property
@@ -39,10 +41,8 @@ class MedusaStream(RESTStream):
 
     @property
     def auth_url(self):
-        if self.config.get("medusa_v2", False):
-            return f"{self.base_url}/auth/user/emailpass"
-        return f"{self.url_base}/auth/token"
-    
+        return f"{self.base_url}/auth/user/emailpass"
+
     @property
     def http_headers(self) -> dict:
         """Return the http headers needed."""
@@ -58,6 +58,7 @@ class MedusaStream(RESTStream):
         return headers
     
     def is_token_valid(self) -> bool:
+        """Check if the current access token is still valid."""
         access_token = self._tap._config.get("access_token")
         now = round(datetime.datetime.utcnow().timestamp())
         expires_in = self._tap.config.get("expires_in")
@@ -67,41 +68,40 @@ class MedusaStream(RESTStream):
             return False
         if not expires_in:
             return False
-        return not ((expires_in - now) < 120)
-    def extract_access_token(self, response):
-        is_medusa_v2 = self.config.get("medusa_v2", False)
-        data = response.json()
-        return data["token"] if is_medusa_v2 else data["access_token"]
-    
+        return not ((expires_in - now) < TOKEN_EXPIRY_BUFFER_SECONDS)
+
     def get_access_token(self):
-        headers = {"Content-Type": "application/json"}
-        login_data = {
-            "email": self.config.get("email"),
-            "password": self.config.get("password"),
-        }
-        
-        access_token = self._tap._config.get("access_token")
+        """Get a valid access token, refreshing if necessary."""
+        current_token = self._tap._config.get("access_token")
         if not self.is_token_valid():
-            response = requests.post(
-                    url=self.auth_url,
-                    data=json.dumps(login_data),
-                    headers=headers,
+            headers = {"Content-Type": "application/json"}
+            login_data = {
+                "email": self.config.get("email"),
+                "password": self.config.get("password"),
+            }
+            
+            auth_response = requests.post(
+                url=self.auth_url,
+                data=json.dumps(login_data),
+                headers=headers,
             )
             try:
-                self.validate_response(response)
+                self.validate_response(auth_response)
             except Exception as e:
-                raise Exception(f"Failed during generating token: {e}")
+                raise Exception(f"Failed during token generation: {e}")
             
-            access_token = self.extract_access_token(response)
-            self._tap._config["access_token"] = access_token
-            now = round((datetime.datetime.utcnow() + datetime.timedelta(minutes=60)).timestamp())
-            self._tap._config["expires_in"] = now
+            new_token = auth_response.json()["token"]
+            self._tap._config["access_token"] = new_token
+            expiry_timestamp = round((datetime.datetime.utcnow() + datetime.timedelta(minutes=TOKEN_VALIDITY_MINUTES)).timestamp())
+            self._tap._config["expires_in"] = expiry_timestamp
 
             # write access token in config file
             with open(self._tap.config_file, "w") as outfile:
                 json.dump(self._tap._config, outfile, indent=4)
+            
+            return new_token
 
-        return access_token
+        return current_token
 
     def get_next_page_token(
         self, response: requests.Response, previous_token: Optional[Any]
@@ -115,6 +115,7 @@ class MedusaStream(RESTStream):
             return previous_token + records_len
 
     def get_starting_time(self, context):
+        """Get the starting time for data extraction."""
         start_date = self.config.get("start_date")
         if start_date:
             start_date = parse(self.config.get("start_date"))
@@ -139,6 +140,7 @@ class MedusaStream(RESTStream):
         return params
     
     def response_error_message(self, response: requests.Response) -> str:
+        """Generate an error message from a failed HTTP response."""
         if 400 <= response.status_code < 500:
             error_type = "Client"
         else:
@@ -149,3 +151,4 @@ class MedusaStream(RESTStream):
             f"{response.reason} for url: {response.url} "
             f"Response: {response.text}"
         )
+        
